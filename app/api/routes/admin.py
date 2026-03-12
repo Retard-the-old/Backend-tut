@@ -48,3 +48,16 @@ async def update_role(user_id: str, data: UserRoleUpdate, admin: User = Depends(
 async def trigger_payouts(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     results = await process_weekly_payouts(db)
     return {"payouts_processed": len(results), "details": results}
+
+
+@router.post("/seed-admin")
+async def seed_admin(email: str, secret: str, db: AsyncSession = Depends(get_db)):
+    if secret != "tutorii-seed-2026":
+        raise HTTPException(status_code=403, detail="Invalid secret")
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.role = "admin"
+    await db.commit()
+    return {"message": f"{email} is now an admin"}
