@@ -33,6 +33,8 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
 
 
 async def require_active_subscription(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> User:
+    if user.role in ("admin", "support"):
+        return user
     from app.models.subscription import Subscription
     result = await db.execute(select(Subscription).where(Subscription.user_id == user.id, Subscription.status == "active"))
     sub = result.scalar_one_or_none()

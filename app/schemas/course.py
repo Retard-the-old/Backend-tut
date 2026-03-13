@@ -42,6 +42,14 @@ class LessonCreate(BaseModel):
     sort_order: int = 0
     is_published: bool = False
 
+class LessonUpdate(BaseModel):
+    title: str | None = None
+    content_md: str | None = None
+    video_url: str | None = None
+    duration_minutes: int | None = None
+    sort_order: int | None = None
+    is_published: bool | None = None
+
 class ProgressUpdate(BaseModel):
     progress_pct: float = 0.0
     completed: bool = False
