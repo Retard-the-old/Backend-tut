@@ -9,6 +9,7 @@ from app.models.commission import Commission, Payout
 from app.models.course import Course
 from app.schemas.admin import DashboardStats, UserRoleUpdate
 from app.schemas.user import UserResponse
+from app.schemas.payout import PayoutResponse
 from app.services.payout_service import process_weekly_payouts
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -49,15 +50,25 @@ async def trigger_payouts(admin: User = Depends(require_admin), db: AsyncSession
     results = await process_weekly_payouts(db)
     return {"payouts_processed": len(results), "details": results}
 
-
-@router.post("/seed-admin")
-async def seed_admin(email: str, secret: str, db: AsyncSession = Depends(get_db)):
-    if secret != "tutorii-seed-2026":
-        raise HTTPException(status_code=403, detail="Invalid secret")
-    result = await db.execute(select(User).where(User.email == email))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    user.role = "admin"
-    await db.commit()
-    return {"message": f"{email} is now an admin"}
+@router.get("/payouts", response_model=list[dict])
+async def list_payouts(limit: int = 200, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Payout, User).join(User, Payout.earner_id == User.id)
+        .order_by(Payout.created_at.desc()).limit(limit)
+    )
+    rows = result.all()
+    return [
+        {
+            "id": str(p.id),
+            "user": u.full_name or u.email,
+            "email": u.email,
+            "iban": u.payout_iban or "",
+            "iban_name": u.payout_name or "",
+            "amount": float(p.amount_aed),
+            "status": p.status,
+            "failure_reason": p.failure_reason,
+            "date": p.paid_at.strftime("%b %d, %Y") if p.paid_at else p.created_at.strftime("%b %d, %Y"),
+            "created_at": p.created_at.isoformat(),
+        }
+        for p, u in rows
+    ]
