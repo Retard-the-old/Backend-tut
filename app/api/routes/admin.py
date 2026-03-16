@@ -76,23 +76,26 @@ async def list_payouts(limit: int = 200, admin: User = Depends(require_admin), d
 @router.post("/users/{user_id}/subscription/activate")
 async def admin_activate_subscription(user_id: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     from app.models.subscription import Subscription
-    from datetime import datetime, timezone
+    from datetime import datetime, timezone, timedelta
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    # Check for existing subscription
-    sub_result = await db.execute(select(Subscription).where(Subscription.user_id == user_id).order_by(Subscription.created_at.desc()))
+    now = datetime.now(timezone.utc)
+    sub_result = await db.execute(select(Subscription).where(Subscription.user_id == user_id))
     sub = sub_result.scalars().first()
     if sub:
         sub.status = "active"
         sub.cancelled_at = None
+        sub.current_period_start = now
+        sub.current_period_end = now + timedelta(days=30)
     else:
         sub = Subscription(
             user_id=user_id,
             status="active",
-            amount_aed=95.0,
-            created_at=datetime.now(timezone.utc),
+            plan_price_aed=95.0,
+            current_period_start=now,
+            current_period_end=now + timedelta(days=30),
         )
         db.add(sub)
     await db.flush()
