@@ -20,7 +20,7 @@ class Course(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-    lessons: Mapped[list["Lesson"]] = relationship("Lesson", back_populates="course", order_by="Lesson.sort_order")
+    lessons: Mapped[list["Lesson"]] = relationship("Lesson", back_populates="course", order_by="Lesson.sort_order", cascade="all, delete-orphan")
 
 
 class Lesson(Base):
@@ -37,6 +37,7 @@ class Lesson(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     course: Mapped["Course"] = relationship("Course", back_populates="lessons")
+    progress: Mapped[list["LessonProgress"]] = relationship("LessonProgress", cascade="all, delete-orphan", foreign_keys="LessonProgress.lesson_id")
 
 
 class LessonProgress(Base):
