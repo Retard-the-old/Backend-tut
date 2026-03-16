@@ -23,6 +23,18 @@ async def get_one(course_id: str, db: AsyncSession = Depends(get_db)):
 async def create(data: CourseCreate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     return CourseResponse.model_validate(await create_course(data, db))
 
+@router.patch("/{course_id}", response_model=CourseResponse)
+async def patch_course(course_id: str, data: dict, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Course).where(Course.id == course_id))
+    course = result.scalar_one_or_none()
+    if course is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    for field, value in data.items():
+        if hasattr(course, field):
+            setattr(course, field, value)
+    await db.flush()
+    return CourseResponse.model_validate(course)
+
 @router.delete("/{course_id}", status_code=204)
 async def delete_course(course_id: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Course).where(Course.id == course_id))
