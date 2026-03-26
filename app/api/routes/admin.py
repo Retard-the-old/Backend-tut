@@ -28,10 +28,36 @@ async def dashboard(admin: User = Depends(require_admin), db: AsyncSession = Dep
         total_payouts_aed=total_payouts, total_courses=courses,
     )
 
-@router.get("/users", response_model=list[UserResponse])
-async def list_users(skip: int = 0, limit: int = 50, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+@router.get("/users")
+async def list_users(skip: int = 0, limit: int = 200, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).order_by(User.created_at.desc()).offset(skip).limit(limit))
-    return [UserResponse.model_validate(u) for u in result.scalars().all()]
+    users = result.scalars().all()
+    user_ids = [u.id for u in users]
+
+    # Get subscriptions for all users in one query
+    subs_result = await db.execute(select(Subscription).where(Subscription.user_id.in_(user_ids)))
+    subs_map = {s.user_id: s for s in subs_result.scalars().all()}
+
+    return [
+        {
+            "id": u.id,
+            "email": u.email,
+            "full_name": u.full_name,
+            "role": u.role,
+            "referral_code": u.referral_code,
+            "referred_by_id": u.referred_by_id,
+            "is_active": u.is_active,
+            "payout_iban": u.payout_iban,
+            "payout_name": getattr(u, "payout_name", None),
+            "created_at": u.created_at.isoformat(),
+            "subscription_status": subs_map[u.id].status if u.id in subs_map else "inactive",
+            "referral_count": 0,
+            "total_earned": 0,
+            "pending_payout": 0,
+            "referred_by_name": None,
+        }
+        for u in users
+    ]
 
 @router.patch("/users/{user_id}/role", response_model=UserResponse)
 async def update_role(user_id: str, data: UserRoleUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
