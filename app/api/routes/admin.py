@@ -179,12 +179,30 @@ async def create_user(data: dict, admin: User = Depends(require_admin), db: Asyn
 
 @router.delete("/users/{user_id}")
 async def delete_user(user_id: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    from app.models.commission import Commission, Payout
+    from app.models.subscription import Subscription, Payment
+
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     if user.role == "admin":
         raise HTTPException(status_code=403, detail="Cannot delete admin users")
+
+    # Delete related records in order
+    await db.execute(select(Commission).where(Commission.earner_id == user_id))
+    comms = (await db.execute(select(Commission).where(Commission.earner_id == user_id))).scalars().all()
+    for c in comms: await db.delete(c)
+
+    payouts = (await db.execute(select(Payout).where(Payout.earner_id == user_id))).scalars().all()
+    for p in payouts: await db.delete(p)
+
+    payments = (await db.execute(select(Payment).where(Payment.user_id == user_id))).scalars().all()
+    for p in payments: await db.delete(p)
+
+    subs = (await db.execute(select(Subscription).where(Subscription.user_id == user_id))).scalars().all()
+    for s in subs: await db.delete(s)
+
     await db.delete(user)
     await db.commit()
     return {"deleted": True, "user_id": user_id}
