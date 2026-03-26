@@ -139,3 +139,52 @@ async def admin_cancel_subscription(user_id: str, admin: User = Depends(require_
     sub.cancelled_at = datetime.now(timezone.utc)
     await db.flush()
     return {"success": True, "user_id": user_id, "status": "cancelled"}
+
+@router.post("/users/create")
+async def create_user(data: dict, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    from app.models.user import User as UserModel
+    from passlib.context import CryptContext
+    import secrets, string
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+    email = data.get("email", "").lower().strip()
+    full_name = data.get("full_name", "").strip()
+    password = data.get("password", "").strip()
+    role = data.get("role", "user")
+
+    if not email or not full_name or not password:
+        raise HTTPException(status_code=400, detail="email, full_name and password are required")
+
+    existing = await db.execute(select(User).where(User.email == email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    # Generate referral code
+    chars = string.ascii_uppercase + string.digits
+    ref_code = "".join(secrets.choice(chars) for _ in range(8))
+
+    user = User(
+        email=email,
+        full_name=full_name,
+        hashed_password=pwd_context.hash(password),
+        role=role,
+        referral_code=ref_code,
+        is_active=True,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return {"id": user.id, "email": user.email, "full_name": user.full_name, "referral_code": user.referral_code, "role": user.role}
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(user_id: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role == "admin":
+        raise HTTPException(status_code=403, detail="Cannot delete admin users")
+    await db.delete(user)
+    await db.commit()
+    return {"deleted": True, "user_id": user_id}
