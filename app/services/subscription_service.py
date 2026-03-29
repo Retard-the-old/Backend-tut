@@ -14,44 +14,26 @@ from app.schemas.subscription import SubscriptionResponse
 from app.core.config import settings
 
 # Fixed MamoPay subscription link — update this if you change the plan
-MAMOPAY_SUBSCRIPTION_URL = "https://business.mamopay.com/pay/galcofzellc-2d4c35"
+MAMOPAY_SUBSCRIPTION_URL = "https://business.mamopay.com/pay/galcofzellc-a57db4"
 
 
 async def create_subscription(user: User, db: AsyncSession) -> dict:
     """
-    Creates or retrieves a subscription record for the user
-    and returns the MamoPay payment link.
+    Returns the MamoPay payment link.
+    Does NOT create a subscription record — that happens when webhook confirms payment.
     """
-    # Check if subscription already exists
+    # Check if already active
     result = await db.execute(
-        select(Subscription).where(Subscription.user_id == user.id)
+        select(Subscription).where(Subscription.user_id == user.id, Subscription.status == "active")
     )
-    sub = result.scalar_one_or_none()
-
-    if sub and sub.status == "active":
+    if result.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You already have an active subscription"
         )
 
-    if sub:
-        # Update existing subscription to pending
-        sub.status = "pending"
-        sub.mamopay_payment_link = MAMOPAY_SUBSCRIPTION_URL
-    else:
-        # Create new subscription record (pending until webhook confirms payment)
-        sub = Subscription(
-            user_id=user.id,
-            status="pending",
-            plan_price_aed=settings.SUBSCRIPTION_PRICE_AED if hasattr(settings, 'SUBSCRIPTION_PRICE_AED') else 95.0,
-            mamopay_payment_link=MAMOPAY_SUBSCRIPTION_URL,
-        )
-        db.add(sub)
-
-    await db.flush()
-
     return {
-        "subscription_id": sub.id,
+        "subscription_id": None,
         "payment_link": MAMOPAY_SUBSCRIPTION_URL,
         "status": "pending"
     }
