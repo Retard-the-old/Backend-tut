@@ -14,7 +14,7 @@ from app.schemas.subscription import SubscriptionResponse
 from app.core.config import settings
 
 # Fixed MamoPay subscription link — update this if you change the plan
-MAMOPAY_SUBSCRIPTION_URL = "https://business.mamopay.com/pay/galcofzellc-a57db4"
+MAMOPAY_SUBSCRIPTION_URL = "https://business.mamopay.com/pay/galcofzellc-4b20ab"
 
 
 async def create_subscription(user: User, db: AsyncSession) -> dict:
