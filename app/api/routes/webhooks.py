@@ -13,6 +13,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
+def _extract_email(payload: dict) -> str:
+    """Extract customer email from a MamoPay webhook payload, trying all known field locations."""
+    return (
+        payload.get("customer_email")
+        or payload.get("email")
+        or (payload.get("customer") or {}).get("email")
+        or (payload.get("customer_details") or {}).get("email")
+        or (payload.get("payer") or {}).get("email")
+        or payload.get("billing_email")
+        or ""
+    ).lower().strip()
+
+
 @router.post("/mamopay")
 async def mamopay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     try:
@@ -29,20 +42,13 @@ async def mamopay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     is_success = event_type in (
         "charge.succeeded", "subscription.succeeded",
         "paid", "succeeded", "success", "PAID"
-    ) or payload.get("status") in ("paid", "succeeded", "PAID", "success")
+    ) or payload.get("status") in ("paid", "succeeded", "PAID", "success", "captured")
 
     if not is_success:
         logger.info(f"Non-success webhook ignored: event_type={event_type}")
         return {"received": True}
 
-    # Find customer email
-    customer_email = (
-        payload.get("customer_email")
-        or payload.get("email")
-        or (payload.get("customer") or {}).get("email")
-        or (payload.get("payer") or {}).get("email")
-        or payload.get("billing_email")
-    )
+    customer_email = _extract_email(payload)
 
     logger.info(f"Payment success: charge_id={charge_id}, email={customer_email}, amount={amount}")
 
@@ -52,7 +58,7 @@ async def mamopay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     user = None
     if customer_email:
         user_result = await db.execute(
-            select(User).where(User.email == customer_email.lower().strip())
+            select(User).where(User.email == customer_email)
         )
         user = user_result.scalar_one_or_none()
 
@@ -68,23 +74,20 @@ async def mamopay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     sub = sub_result.scalars().first()
 
     if sub:
-        # Update existing
         sub.status = "active"
         sub.cancelled_at = None
         sub.current_period_start = now
         sub.current_period_end = now + timedelta(days=30)
     else:
-        # Create new
         sub = Subscription(
             user_id=user.id,
             status="active",
-            plan_price_aed=amount or 20.0,
+            plan_price_aed=amount or 95.0,
             current_period_start=now,
             current_period_end=now + timedelta(days=30),
         )
         db.add(sub)
 
-    # Commit subscription first
     await db.commit()
     await db.refresh(sub)
 
@@ -97,7 +100,7 @@ async def mamopay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             payment = Payment(
                 subscription_id=sub.id,
                 user_id=user.id,
-                amount_aed=amount or 20.0,
+                amount_aed=amount or 95.0,
                 status="succeeded",
                 mamopay_charge_id=charge_id,
             )

@@ -3,10 +3,6 @@ app/services/mamopay_sync.py
 
 Background job that runs every hour and syncs MamoPay payments with Tutorii subscriptions.
 Ensures no user who paid gets stuck as inactive due to webhook failures.
-
-Add to main.py lifespan:
-    from app.services.mamopay_sync import start_sync_scheduler
-    asyncio.create_task(start_sync_scheduler())
 """
 import asyncio
 import logging
@@ -14,15 +10,26 @@ import httpx
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.db.database import get_db, AsyncSessionLocal
+from app.db.database import AsyncSessionLocal
 from app.models.user import User
 from app.models.subscription import Subscription, Payment
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-MAMOPAY_API_KEY = "sk-bb4ce2f9-c13a-473a-945a-b55b8d22400e"
-MAMOPAY_API_URL = "https://business.mamopay.com/manage_api/v1"
 SYNC_INTERVAL_SECONDS = 3600  # Run every hour
+
+
+def _extract_email(charge: dict) -> str:
+    """Extract customer email from a MamoPay charge object, trying all known field locations."""
+    return (
+        charge.get("customer_email")
+        or charge.get("email")
+        or (charge.get("customer") or {}).get("email")
+        or (charge.get("customer_details") or {}).get("email")
+        or (charge.get("payer") or {}).get("email")
+        or ""
+    ).lower().strip()
 
 
 async def sync_mamopay_payments():
@@ -34,14 +41,13 @@ async def sync_mamopay_payments():
     logger.info("MamoPay sync job starting...")
 
     try:
-        # Fetch all pages of charges from MamoPay
         all_charges = []
         page = 1
         async with httpx.AsyncClient(timeout=15) as client:
             while True:
                 resp = await client.get(
-                    f"{MAMOPAY_API_URL}/charges",
-                    headers={"Authorization": f"Bearer {MAMOPAY_API_KEY}"},
+                    f"{settings.MAMOPAY_BASE_URL}/charges",
+                    headers={"Authorization": f"Bearer {settings.MAMOPAY_API_KEY}"},
                     params={"page": page, "per_page": 50}
                 )
                 resp.raise_for_status()
@@ -61,7 +67,6 @@ async def sync_mamopay_payments():
             if charge.get("status") != "captured":
                 continue
             try:
-                # Parse MamoPay date format: "2026-04-04-15-05-50"
                 date_str = charge.get("created_date", "")
                 parts = date_str.split("-")
                 if len(parts) >= 6:
@@ -80,7 +85,6 @@ async def sync_mamopay_payments():
         if not recent_captured:
             return
 
-        # Process each payment
         async with AsyncSessionLocal() as db:
             activated_count = 0
             for charge in recent_captured:
@@ -103,11 +107,10 @@ async def sync_mamopay_payments():
 async def process_charge(charge: dict, db: AsyncSession) -> bool:
     """
     Process a single captured charge.
-    Returns True if a subscription was activated, False if already active or user not found.
+    Returns True if a subscription was activated, False otherwise.
     """
     charge_id = charge.get("id")
-    customer = charge.get("customer_details", {})
-    email = (customer.get("email") or "").lower().strip()
+    email = _extract_email(charge)
     amount = float(charge.get("amount", 95))
 
     if not email:
@@ -118,7 +121,7 @@ async def process_charge(charge: dict, db: AsyncSession) -> bool:
         select(Payment).where(Payment.mamopay_charge_id == charge_id)
     )
     if existing_payment.scalars().first():
-        return False  # Already processed
+        return False
 
     # Find user by email
     user_result = await db.execute(
@@ -137,7 +140,7 @@ async def process_charge(charge: dict, db: AsyncSession) -> bool:
     sub = sub_result.scalars().first()
 
     if sub and sub.status == "active":
-        # Record payment if not already recorded, but don't re-activate
+        # Record payment if not already done
         payment = Payment(
             subscription_id=sub.id,
             user_id=user.id,
@@ -167,7 +170,6 @@ async def process_charge(charge: dict, db: AsyncSession) -> bool:
         db.add(sub)
         await db.flush()
 
-    # Record payment
     payment = Payment(
         subscription_id=sub.id,
         user_id=user.id,
@@ -183,10 +185,7 @@ async def process_charge(charge: dict, db: AsyncSession) -> bool:
 
 
 async def start_sync_scheduler():
-    """
-    Runs the MamoPay sync job on startup and then every hour.
-    Add this to main.py lifespan.
-    """
+    """Runs the MamoPay sync job on startup and then every hour."""
     logger.info("MamoPay sync scheduler started")
     while True:
         try:

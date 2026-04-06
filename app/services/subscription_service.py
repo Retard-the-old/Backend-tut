@@ -4,7 +4,7 @@ When user subscribes, they are redirected to the MamoPay page.
 MamoPay handles recurring billing. Webhook activates the account on payment.
 """
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from fastapi import HTTPException, status
@@ -17,12 +17,23 @@ from app.core.config import settings
 MAMOPAY_SUBSCRIPTION_URL = "https://business.mamopay.com/pay/galcofzellc-4b20ab"
 
 
+def _extract_email(charge: dict) -> str:
+    """Extract customer email from a MamoPay charge object, trying all known field locations."""
+    return (
+        charge.get("customer_email")
+        or charge.get("email")
+        or (charge.get("customer") or {}).get("email")
+        or (charge.get("customer_details") or {}).get("email")
+        or (charge.get("payer") or {}).get("email")
+        or ""
+    ).lower().strip()
+
+
 async def create_subscription(user: User, db: AsyncSession) -> dict:
     """
     Returns the MamoPay payment link.
     Does NOT create a subscription record — that happens when webhook confirms payment.
     """
-    # Check if already active
     result = await db.execute(
         select(Subscription).where(Subscription.user_id == user.id, Subscription.status == "active")
     )
@@ -31,7 +42,6 @@ async def create_subscription(user: User, db: AsyncSession) -> dict:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You already have an active subscription"
         )
-
     return {
         "subscription_id": None,
         "payment_link": MAMOPAY_SUBSCRIPTION_URL,
@@ -53,7 +63,6 @@ async def cancel_subscription(user: User, db: AsyncSession) -> SubscriptionRespo
             detail="No active subscription found"
         )
     sub.status = "cancelled"
-    from datetime import timezone
     sub.cancelled_at = datetime.now(timezone.utc)
     await db.flush()
     return SubscriptionResponse.model_validate(sub)
@@ -71,18 +80,13 @@ async def get_user_subscription(user: User, db: AsyncSession) -> SubscriptionRes
     return SubscriptionResponse.model_validate(sub)
 
 
-MAMOPAY_API_KEY = "sk-bb4ce2f9-c13a-473a-945a-b55b8d22400e"
-MAMOPAY_API_URL = "https://business.mamopay.com/manage_api/v1"
-
-
 async def verify_and_activate(user: User, db: AsyncSession) -> dict:
     """
-    Queries MamoPay charges API for a recent successful payment by this user's email.
+    Queries MamoPay charges API for a successful payment by this user's email.
     If found and subscription not yet active, activates it.
     """
     import httpx
-    from datetime import timedelta
-    from app.models.subscription import Subscription, Payment
+    from app.models.subscription import Payment
 
     # Check if already active
     sub_result = await db.execute(
@@ -96,37 +100,30 @@ async def verify_and_activate(user: User, db: AsyncSession) -> dict:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
-                f"{MAMOPAY_API_URL}/charges",
-                headers={"Authorization": f"Bearer {MAMOPAY_API_KEY}"}
+                f"{settings.MAMOPAY_BASE_URL}/charges",
+                headers={"Authorization": f"Bearer {settings.MAMOPAY_API_KEY}"}
             )
             resp.raise_for_status()
             data = resp.json()
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not reach MamoPay: {str(e)}")
 
-    # Find a successful charge for this user's email within the last 24 hours
     charges = data if isinstance(data, list) else data.get("data", data.get("charges", []))
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=24)
 
     matched_charge = None
     for charge in charges:
-        charge_email = (
-            charge.get("customer_email") or
-            charge.get("email") or
-            (charge.get("customer") or {}).get("email") or
-            ""
-        ).lower().strip()
-
+        charge_email = _extract_email(charge)
         charge_status = charge.get("status", "")
         is_success = charge_status in ("captured", "paid", "succeeded", "PAID")
-
         if charge_email == user.email.lower() and is_success:
             matched_charge = charge
             break
 
     if not matched_charge:
-        return {"activated": False, "message": "No successful payment found for your email on MamoPay. Please ensure you used the same email you registered with."}
+        return {
+            "activated": False,
+            "message": "No successful payment found for your email on MamoPay. Please ensure you used the same email you registered with."
+        }
 
     # Activate subscription
     now = datetime.now(timezone.utc)
@@ -169,16 +166,13 @@ async def verify_and_activate(user: User, db: AsyncSession) -> dict:
 
 async def verify_payment_and_register(data: dict, db: AsyncSession) -> dict:
     """
-    Called when user clicks 'I've paid'.
+    Called when user clicks 'I\'ve paid'.
     1. Checks MamoPay for a successful charge with this email
     2. If found: creates account + activates subscription + returns tokens
     3. If not found: returns activated=False
     """
     import httpx
-    from datetime import timedelta
-    from app.models.subscription import Subscription, Payment
-    from app.services.auth_service import register_user
-    from app.schemas.auth import RegisterRequest
+    from app.models.subscription import Payment
     from app.core.security import create_access_token, create_refresh_token
 
     email = data.get("email", "").lower().strip()
@@ -187,11 +181,10 @@ async def verify_payment_and_register(data: dict, db: AsyncSession) -> dict:
     phone = data.get("phone", "")
     referral_code = data.get("referral_code")
 
-    # Check if account already exists
+    # Check if account already exists and is active
     existing = await db.execute(select(User).where(User.email == email))
     existing_user = existing.scalar_one_or_none()
 
-    # If account exists and is already active, just return tokens
     if existing_user:
         sub_result = await db.execute(
             select(Subscription).where(
@@ -211,8 +204,8 @@ async def verify_payment_and_register(data: dict, db: AsyncSession) -> dict:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
-                f"{MAMOPAY_API_URL}/charges",
-                headers={"Authorization": f"Bearer {MAMOPAY_API_KEY}"}
+                f"{settings.MAMOPAY_BASE_URL}/charges",
+                headers={"Authorization": f"Bearer {settings.MAMOPAY_API_KEY}"}
             )
             resp.raise_for_status()
             data_resp = resp.json()
@@ -223,14 +216,8 @@ async def verify_payment_and_register(data: dict, db: AsyncSession) -> dict:
 
     matched_charge = None
     for charge in charges:
-        charge_email = (
-            charge.get("customer_email") or
-            charge.get("email") or
-            (charge.get("customer") or {}).get("email") or ""
-        ).lower().strip()
-
+        charge_email = _extract_email(charge)
         is_success = charge.get("status", "") in ("captured", "paid", "succeeded", "PAID")
-
         if charge_email == email and is_success:
             matched_charge = charge
             break
@@ -295,7 +282,6 @@ async def verify_payment_and_register(data: dict, db: AsyncSession) -> dict:
         db.add(payment)
 
     await db.commit()
-
     return {
         "activated": True,
         "access_token": create_access_token(str(existing_user.id)),

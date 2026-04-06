@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # ── MamoPay ──
     MAMOPAY_API_KEY: str = ""
-    MAMOPAY_BASE_URL: str = "https://sandbox.mamopay.com/manage_api/v1"
+    MAMOPAY_BASE_URL: str = "https://business.mamopay.com/manage_api/v1"
     MAMOPAY_WEBHOOK_SECRET: str = ""
 
     # ── Anthropic ──
