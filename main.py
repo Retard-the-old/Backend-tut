@@ -6,14 +6,19 @@ from app.core.logging_config import setup_logging
 from app.api.router import api_router
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.request_logging import RequestLoggingMiddleware
+from app.services.mamopay_sync import start_sync_scheduler
 import logging
+import asyncio
 
 setup_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logging.getLogger(__name__).info("Tutorii API starting up")
+    # Start background MamoPay sync — runs every hour to catch missed webhooks
+    sync_task = asyncio.create_task(start_sync_scheduler())
     yield
+    sync_task.cancel()
     logging.getLogger(__name__).info("Tutorii API shutting down")
 
 app = FastAPI(
