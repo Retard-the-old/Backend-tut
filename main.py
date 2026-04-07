@@ -11,15 +11,30 @@ import logging
 import asyncio
 
 setup_logging()
+logger = logging.getLogger(__name__)
+
+
+def run_migrations():
+    """Run alembic migrations at startup. Logs errors but does not crash the server."""
+    try:
+        from alembic.config import Config
+        from alembic import command
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Database migrations applied successfully")
+    except Exception as e:
+        logger.error(f"Migration failed (server will still start): {e}", exc_info=True)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logging.getLogger(__name__).info("Tutorii API starting up")
+    logger.info("Tutorii API starting up")
+    run_migrations()
     # Start background MamoPay sync — runs every hour to catch missed webhooks
     sync_task = asyncio.create_task(start_sync_scheduler())
     yield
     sync_task.cancel()
-    logging.getLogger(__name__).info("Tutorii API shutting down")
+    logger.info("Tutorii API shutting down")
 
 app = FastAPI(
     title=settings.APP_NAME,
