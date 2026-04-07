@@ -8,10 +8,37 @@ from app.core.config import settings
 from fastapi import Depends
 from datetime import datetime, timezone, timedelta
 import logging
+import hmac
+import hashlib
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+
+
+def _verify_signature(payload_bytes: bytes, signature_header: str | None) -> bool:
+    """
+    Verify MamoPay webhook HMAC-SHA256 signature.
+    If MAMOPAY_WEBHOOK_SECRET is not configured, skip verification (logs a warning).
+    """
+    if not settings.MAMOPAY_WEBHOOK_SECRET:
+        logger.warning("MAMOPAY_WEBHOOK_SECRET not set — skipping signature verification")
+        return True
+    if not signature_header:
+        logger.warning("Webhook received with no signature header — rejected")
+        return False
+    try:
+        expected = hmac.new(
+            key=settings.MAMOPAY_WEBHOOK_SECRET.encode(),
+            msg=payload_bytes,
+            digestmod=hashlib.sha256
+        ).hexdigest()
+        # MamoPay may send "sha256=<hex>" or just "<hex>"
+        received = signature_header.replace("sha256=", "").strip()
+        return hmac.compare_digest(expected, received)
+    except Exception as e:
+        logger.error(f"Signature verification error: {e}")
+        return False
 
 
 def _extract_email(payload: dict) -> str:
@@ -29,8 +56,21 @@ def _extract_email(payload: dict) -> str:
 
 @router.post("/mamopay")
 async def mamopay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    # Read raw body first for signature verification
     try:
-        payload = await request.json()
+        raw_body = await request.body()
+    except Exception:
+        return {"received": True, "error": "could not read body"}
+
+    # Verify signature — reject if secret is configured and signature is wrong
+    sig_header = request.headers.get("x-mamopay-signature") or request.headers.get("x-signature")
+    if not _verify_signature(raw_body, sig_header):
+        logger.warning(f"Webhook signature mismatch — rejected. IP={request.client.host if request.client else 'unknown'}")
+        return {"received": False, "error": "invalid signature"}
+
+    try:
+        import json
+        payload = json.loads(raw_body)
     except Exception:
         return {"received": True, "error": "invalid json"}
 

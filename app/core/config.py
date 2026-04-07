@@ -79,3 +79,11 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Enforce strong SECRET_KEY in non-development environments
+if settings.APP_ENV != "development" and settings.SECRET_KEY in ("change-me", "", "secret", "password"):
+    raise RuntimeError(
+        "FATAL: SECRET_KEY is set to an insecure default value. "
+        "Set a strong random SECRET_KEY in your environment variables before running in production. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
