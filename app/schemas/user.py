@@ -6,6 +6,7 @@ class UserResponse(BaseModel):
     id: str
     email: str
     full_name: str
+    phone: str | None
     role: str
     referral_code: str
     referred_by_id: str | None
@@ -16,6 +17,7 @@ class UserResponse(BaseModel):
 
 class UserUpdate(BaseModel):
     full_name: str | None = None
+    phone: str | None = None
     payout_iban: str | None = None
     payout_name: str | None = None
 

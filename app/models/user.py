@@ -27,6 +27,8 @@ class User(Base):
     referral_code: Mapped[str] = mapped_column(String(12), unique=True, index=True, nullable=False)
     referred_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
 
+    phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
     mamopay_customer_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     payout_iban: Mapped[str | None] = mapped_column(String(34), nullable=True)
     payout_name: Mapped[str | None] = mapped_column(String(255), nullable=True)

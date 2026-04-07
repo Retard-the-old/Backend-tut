@@ -33,6 +33,7 @@ async def register_user(req: RegisterRequest, db: AsyncSession) -> TokenResponse
         email=req.email.lower().strip(),
         hashed_password=hash_password(req.password),
         full_name=req.full_name.strip(),
+        phone=req.phone.strip() if req.phone else None,
         referral_code=nanoid(REFERRAL_ALPHABET, 8).upper(),
         referred_by_id=referred_by_id,
     )

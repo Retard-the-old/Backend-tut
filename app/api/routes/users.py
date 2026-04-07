@@ -24,6 +24,8 @@ async def update_me(data: UserUpdate, user: User = Depends(get_current_user), db
         data.full_name = validate_full_name(data.full_name)
     if data.full_name is not None:
         user.full_name = data.full_name
+    if data.phone is not None:
+        user.phone = data.phone.strip()
     if data.payout_iban is not None:
         user.payout_iban = data.payout_iban
     if data.payout_name is not None:

@@ -209,24 +209,33 @@ async def verify_payment_and_register(data: dict, db: AsyncSession) -> dict:
                 "refresh_token": create_refresh_token(str(existing_user.id)),
             }
 
-    # Query MamoPay charges API
+    # Query MamoPay charges API — paginate through all pages
+    SUCCESS_STATUSES = {"captured", "paid", "succeeded", "PAID", "success", "SUCCESS"}
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"{settings.MAMOPAY_BASE_URL}/charges",
-                headers={"Authorization": f"Bearer {settings.MAMOPAY_API_KEY}"}
-            )
-            resp.raise_for_status()
-            data_resp = resp.json()
+        all_charges = []
+        page = 1
+        async with httpx.AsyncClient(timeout=15) as client:
+            while True:
+                resp = await client.get(
+                    f"{settings.MAMOPAY_BASE_URL}/charges",
+                    headers={"Authorization": f"Bearer {settings.MAMOPAY_API_KEY}"},
+                    params={"page": page, "per_page": 50}
+                )
+                resp.raise_for_status()
+                data_resp = resp.json()
+                charges = data_resp.get("data", []) if isinstance(data_resp, dict) else data_resp
+                all_charges.extend(charges)
+                meta = data_resp.get("pagination_meta", {}) if isinstance(data_resp, dict) else {}
+                if page >= meta.get("total_pages", 1):
+                    break
+                page += 1
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not reach MamoPay: {str(e)}")
 
-    charges = data_resp if isinstance(data_resp, list) else data_resp.get("data", data_resp.get("charges", []))
-
     matched_charge = None
-    for charge in charges:
+    for charge in all_charges:
         charge_email = _extract_email(charge)
-        is_success = charge.get("status", "") in ("captured", "paid", "succeeded", "PAID")
+        is_success = charge.get("status", "") in SUCCESS_STATUSES
         if charge_email == email and is_success:
             matched_charge = charge
             break
