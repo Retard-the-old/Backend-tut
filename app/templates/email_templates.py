@@ -44,3 +44,16 @@ def subscription_expired_email(full_name: str) -> tuple[str, str]:
     <p>Hi {full_name}, your access to courses and the AI tutor is now paused.</p>
     <p>Resubscribe from your dashboard to pick up where you left off &mdash; your progress is saved.</p>"""
     return subject, wrap(content, "Your Tutorii access has expired")
+
+
+def password_reset_email(full_name: str, reset_link: str) -> tuple[str, str]:
+    subject = "Reset your Tutorii password"
+    content = f"""
+    <h2>Password reset request</h2>
+    <p>Hi {full_name},</p>
+    <p>We received a request to reset your Tutorii password. Click the button below to choose a new one.</p>
+    <p style="text-align:center;margin:32px 0">
+      <a href="{reset_link}" style="background:#1B4F72;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:15px">Reset My Password</a>
+    </p>
+    <p style="font-size:13px;color:#5D6D7E">This link expires in 1 hour. If you didn't request a reset, you can safely ignore this email.</p>"""
+    return subject, wrap(content, "Reset your Tutorii password")

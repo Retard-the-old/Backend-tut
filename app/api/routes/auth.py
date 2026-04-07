@@ -1,12 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from jose import JWTError
 from app.db.database import get_db
 from app.schemas.auth import RegisterRequest, LoginRequest, TokenResponse, RefreshRequest
 from app.services.auth_service import register_user, login_user
 from app.core.security import decode_token, create_access_token, create_refresh_token
 from app.models.user import User
+from app.models.password_reset import PasswordResetToken
+from app.core.config import settings
+from app.services.email_service import send_password_reset_email
 from pydantic import BaseModel
 from passlib.context import CryptContext
 from datetime import datetime, timezone, timedelta
@@ -16,9 +19,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-# In-memory reset token store: { token: { "email": str, "expires": datetime } }
-_reset_tokens: dict = {}
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -62,49 +62,78 @@ async def forgot_password(data: ForgotPasswordRequest, db: AsyncSession = Depend
 
     # Always return success to prevent email enumeration
     if user:
+        # Clean up any expired tokens for this email
+        await db.execute(
+            delete(PasswordResetToken).where(
+                PasswordResetToken.email == email,
+                PasswordResetToken.expires_at < datetime.now(timezone.utc)
+            )
+        )
+
         token = secrets.token_urlsafe(32)
-        _reset_tokens[token] = {
-            "email": email,
-            "expires": datetime.now(timezone.utc) + timedelta(hours=1)
-        }
-        reset_link = f"https://www.tutorii.com/reset-password?token={token}"
-        # Logged to Railway until SES email is configured
-        logger.info(f"PASSWORD RESET LINK for {email}: {reset_link}")
+        reset_entry = PasswordResetToken(
+            token=token,
+            email=email,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        db.add(reset_entry)
+        await db.flush()
+
+        reset_link = f"{settings.FRONTEND_URL}/reset-password?token={token}"
+
+        # Try to send via email service; fall back to logging only the email (not the token)
+        try:
+            await send_password_reset_email(email, user.full_name, reset_link)
+            logger.info(f"Password reset email sent to {email}")
+        except Exception:
+            # SES not yet configured — log that a reset was requested, NOT the token
+            logger.warning(f"Password reset requested for {email} — email delivery failed (SES not configured). Reset link NOT logged for security.")
 
     return {"message": "If an account exists with that email, a reset link has been sent."}
 
 
 @router.get("/validate-reset-token")
-async def validate_reset_token(token: str):
-    entry = _reset_tokens.get(token)
+async def validate_reset_token(token: str, db: AsyncSession = Depends(get_db)):
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(PasswordResetToken).where(
+            PasswordResetToken.token == token,
+            PasswordResetToken.used == False,  # noqa: E712
+            PasswordResetToken.expires_at > now
+        )
+    )
+    entry = result.scalar_one_or_none()
     if not entry:
         return {"valid": False}
-    if datetime.now(timezone.utc) > entry["expires"]:
-        del _reset_tokens[token]
-        return {"valid": False}
-    return {"valid": True, "email": entry["email"]}
+    return {"valid": True, "email": entry.email}
 
 
 @router.post("/reset-password")
 async def reset_password(data: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
-    entry = _reset_tokens.get(data.token)
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(PasswordResetToken).where(
+            PasswordResetToken.token == data.token,
+            PasswordResetToken.used == False,  # noqa: E712
+            PasswordResetToken.expires_at > now
+        )
+    )
+    entry = result.scalar_one_or_none()
+
     if not entry:
         raise HTTPException(status_code=400, detail="Invalid or expired reset token")
-    if datetime.now(timezone.utc) > entry["expires"]:
-        del _reset_tokens[data.token]
-        raise HTTPException(status_code=400, detail="Reset token has expired")
 
     if len(data.new_password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
-    result = await db.execute(select(User).where(User.email == entry["email"]))
-    user = result.scalar_one_or_none()
+    user_result = await db.execute(select(User).where(User.email == entry.email))
+    user = user_result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     user.hashed_password = pwd_context.hash(data.new_password)
-    del _reset_tokens[data.token]
-    await db.commit()
+    entry.used = True  # Mark token as consumed — prevents reuse
+    await db.flush()
 
-    logger.info(f"Password reset successful for {entry['email']}")
+    logger.info(f"Password reset successful for {entry.email}")
     return {"message": "Password reset successfully. You can now log in."}

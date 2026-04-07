@@ -4,6 +4,7 @@ from app.clients.ses import ses_client
 from app.templates.email_templates import (
     welcome_email, payout_confirmation_email,
     subscription_cancelled_email, subscription_expired_email,
+    password_reset_email,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,3 +40,8 @@ async def send_subscription_expired(email: str, full_name: str) -> None:
         await ses_client.send_email(to_email=email, subject=subject, html_body=html)
     except Exception as e:
         logger.error("Failed to send expiry email to %s: %s", email, e)
+
+
+async def send_password_reset_email(email: str, full_name: str, reset_link: str) -> None:
+    subject, html = password_reset_email(full_name, reset_link)
+    await ses_client.send_email(to_email=email, subject=subject, html_body=html)
