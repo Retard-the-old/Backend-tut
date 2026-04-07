@@ -19,7 +19,11 @@ def run_migrations():
     try:
         from alembic.config import Config
         from alembic import command
-        alembic_cfg = Config("alembic.ini")
+        import os
+        # Use absolute path so this works regardless of working directory
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        alembic_cfg = Config(os.path.join(base_dir, "alembic.ini"))
+        alembic_cfg.set_main_option("script_location", os.path.join(base_dir, "alembic"))
         command.upgrade(alembic_cfg, "head")
         logger.info("Database migrations applied successfully")
     except Exception as e:
