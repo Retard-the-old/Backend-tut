@@ -84,6 +84,7 @@ async def verify_and_activate(user: User, db: AsyncSession) -> dict:
     """
     Queries MamoPay charges API for a successful payment by this user's email.
     If found and subscription not yet active, activates it.
+    Paginates through all charges to ensure no payment is missed.
     """
     import httpx
     from app.models.subscription import Payment
@@ -96,25 +97,33 @@ async def verify_and_activate(user: User, db: AsyncSession) -> dict:
     if sub and sub.status == "active":
         return {"activated": True, "already_active": True}
 
-    # Query MamoPay charges API
+    # Query MamoPay charges API — paginate through all pages
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"{settings.MAMOPAY_BASE_URL}/charges",
-                headers={"Authorization": f"Bearer {settings.MAMOPAY_API_KEY}"}
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        all_charges = []
+        page = 1
+        async with httpx.AsyncClient(timeout=15) as client:
+            while True:
+                resp = await client.get(
+                    f"{settings.MAMOPAY_BASE_URL}/charges",
+                    headers={"Authorization": f"Bearer {settings.MAMOPAY_API_KEY}"},
+                    params={"page": page, "per_page": 50}
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                charges = data.get("data", []) if isinstance(data, dict) else data
+                all_charges.extend(charges)
+                meta = data.get("pagination_meta", {}) if isinstance(data, dict) else {}
+                if page >= meta.get("total_pages", 1):
+                    break
+                page += 1
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not reach MamoPay: {str(e)}")
 
-    charges = data if isinstance(data, list) else data.get("data", data.get("charges", []))
-
+    SUCCESS_STATUSES = {"captured", "paid", "succeeded", "PAID", "success", "SUCCESS"}
     matched_charge = None
-    for charge in charges:
+    for charge in all_charges:
         charge_email = _extract_email(charge)
-        charge_status = charge.get("status", "")
-        is_success = charge_status in ("captured", "paid", "succeeded", "PAID")
+        is_success = charge.get("status", "") in SUCCESS_STATUSES
         if charge_email == user.email.lower() and is_success:
             matched_charge = charge
             break
