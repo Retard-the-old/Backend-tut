@@ -13,8 +13,7 @@ from app.models.user import User
 from app.schemas.subscription import SubscriptionResponse
 from app.core.config import settings
 
-# Fixed MamoPay subscription link — update this if you change the plan
-MAMOPAY_SUBSCRIPTION_URL = "https://business.mamopay.com/pay/galcofzellc-4b20ab"
+# MamoPay subscription link sourced from settings — set MAMOPAY_SUBSCRIPTION_LINK in .env
 
 
 def _extract_email(charge: dict) -> str:
@@ -44,7 +43,7 @@ async def create_subscription(user: User, db: AsyncSession) -> dict:
         )
     return {
         "subscription_id": None,
-        "payment_link": MAMOPAY_SUBSCRIPTION_URL,
+        "payment_link": settings.MAMOPAY_SUBSCRIPTION_LINK,
         "status": "pending"
     }
 
@@ -145,7 +144,7 @@ async def verify_and_activate(user: User, db: AsyncSession) -> dict:
         sub = Subscription(
             user_id=user.id,
             status="active",
-            plan_price_aed=95.0,
+            plan_price_aed=settings.SUBSCRIPTION_PRICE_AED,
             current_period_start=now,
             current_period_end=now + timedelta(days=30),
         )

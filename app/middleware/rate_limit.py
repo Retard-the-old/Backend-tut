@@ -40,11 +40,13 @@ def _client_ip(request: Request) -> str:
 
 # Limits: (max_requests, window_seconds)
 ROUTE_LIMITS: dict[str, tuple[int, int]] = {
-    "/api/v1/auth/login": (5, 60),         # 5 per minute
-    "/api/v1/auth/register": (3, 60),       # 3 per minute
-    "/api/v1/auth/refresh": (10, 60),       # 10 per minute
-    "/api/v1/chat/messages": (20, 60),      # 20 per minute
-    "/api/v1/webhooks/mamopay": (30, 60),   # 30 per minute
+    "/api/v1/auth/login": (5, 60),              # 5 per minute
+    "/api/v1/auth/register": (3, 60),           # 3 per minute
+    "/api/v1/auth/refresh": (10, 60),           # 10 per minute
+    "/api/v1/auth/forgot-password": (3, 3600),  # 3 per hour — prevents reset spam
+    "/api/v1/auth/reset-password": (5, 3600),   # 5 per hour — prevents token brute force
+    "/api/v1/chat/messages": (20, 60),          # 20 per minute
+    "/api/v1/webhooks/mamopay": (30, 60),       # 30 per minute
 }
 DEFAULT_LIMIT = (60, 60)  # 60 per minute for everything else
 

@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.db.database import get_db
 from app.models.subscription import Subscription, Payment
 from app.models.user import User
+from app.core.config import settings
 from fastapi import Depends
 from datetime import datetime, timezone, timedelta
 import logging
@@ -94,7 +94,7 @@ async def mamopay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             payment = Payment(
                 subscription_id=sub.id,
                 user_id=user.id,
-                amount_aed=amount or 95.0,
+                amount_aed=amount or settings.SUBSCRIPTION_PRICE_AED,
                 status="succeeded",
                 mamopay_charge_id=charge_id,
             )
@@ -111,7 +111,7 @@ async def mamopay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         sub = Subscription(
             user_id=user.id,
             status="active",
-            plan_price_aed=amount or 95.0,
+            plan_price_aed=amount or settings.SUBSCRIPTION_PRICE_AED,
             current_period_start=now,
             current_period_end=now + timedelta(days=30),
         )
@@ -124,7 +124,7 @@ async def mamopay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         payment = Payment(
             subscription_id=sub.id,
             user_id=user.id,
-            amount_aed=amount or 95.0,
+            amount_aed=amount or settings.SUBSCRIPTION_PRICE_AED,
             status="succeeded",
             mamopay_charge_id=charge_id,
         )

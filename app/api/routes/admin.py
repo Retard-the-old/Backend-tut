@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.db.database import get_db
 from app.core.dependencies import require_admin
+from app.core.config import settings
 from app.models.user import User
 from app.models.subscription import Subscription, Payment
 from app.models.commission import Commission, Payout
@@ -119,7 +120,7 @@ async def admin_activate_subscription(user_id: str, admin: User = Depends(requir
         sub = Subscription(
             user_id=user_id,
             status="active",
-            plan_price_aed=95.0,
+            plan_price_aed=settings.SUBSCRIPTION_PRICE_AED,
             current_period_start=now,
             current_period_end=now + timedelta(days=30),
         )
