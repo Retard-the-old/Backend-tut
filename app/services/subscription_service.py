@@ -253,7 +253,16 @@ async def verify_payment_and_register(data: dict, db: AsyncSession) -> dict:
         import secrets, string
         pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
         chars = string.ascii_uppercase + string.digits
-        ref_code = "".join(secrets.choice(chars) for _ in range(8))
+        # Generate unique referral code — retry up to 5 times on collision
+        ref_code = None
+        for _ in range(5):
+            candidate = "".join(secrets.choice(chars) for _ in range(8))
+            clash = await db.execute(select(User).where(User.referral_code == candidate))
+            if not clash.scalar_one_or_none():
+                ref_code = candidate
+                break
+        if not ref_code:
+            ref_code = "".join(secrets.choice(chars) for _ in range(12))  # fallback: longer code
 
         referred_by = None
         if referral_code:

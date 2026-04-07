@@ -29,12 +29,23 @@ async def register_user(req: RegisterRequest, db: AsyncSession) -> TokenResponse
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid referral code")
         referred_by_id = referrer.id
 
+    # Generate a unique referral code — retry up to 5 times on collision
+    referral_code = None
+    for _ in range(5):
+        candidate = nanoid(REFERRAL_ALPHABET, 8).upper()
+        clash = await db.execute(select(User).where(User.referral_code == candidate))
+        if not clash.scalar_one_or_none():
+            referral_code = candidate
+            break
+    if not referral_code:
+        raise HTTPException(status_code=500, detail="Could not generate unique referral code. Please try again.")
+
     user = User(
         email=req.email.lower().strip(),
         hashed_password=hash_password(req.password),
         full_name=req.full_name.strip(),
         phone=req.phone.strip() if req.phone else None,
-        referral_code=nanoid(REFERRAL_ALPHABET, 8).upper(),
+        referral_code=referral_code,
         referred_by_id=referred_by_id,
     )
     db.add(user)
