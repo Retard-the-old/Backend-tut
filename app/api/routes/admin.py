@@ -53,6 +53,38 @@ async def list_users(skip: int = 0, limit: int = 200, admin: User = Depends(requ
     subs_result = await db.execute(select(Subscription).where(Subscription.user_id.in_(user_ids)))
     subs_map = {s.user_id: s for s in subs_result.scalars().all()}
 
+    # Referral counts
+    ref_counts_result = await db.execute(
+        select(User.referred_by_id, func.count(User.id).label("cnt"))
+        .where(User.referred_by_id.in_(user_ids))
+        .group_by(User.referred_by_id)
+    )
+    ref_counts_map = {row.referred_by_id: row.cnt for row in ref_counts_result.all()}
+
+    # Total earned (all paid commissions)
+    total_earned_result = await db.execute(
+        select(Commission.earner_id, func.sum(Commission.amount_aed).label("total"))
+        .where(Commission.earner_id.in_(user_ids), Commission.status.in_(["paid", "approved"]))
+        .group_by(Commission.earner_id)
+    )
+    total_earned_map = {row.earner_id: float(row.total) for row in total_earned_result.all()}
+
+    # Pending payout
+    pending_result = await db.execute(
+        select(Commission.earner_id, func.sum(Commission.amount_aed).label("pending"))
+        .where(Commission.earner_id.in_(user_ids), Commission.status == "pending")
+        .group_by(Commission.earner_id)
+    )
+    pending_map = {row.earner_id: float(row.pending) for row in pending_result.all()}
+
+    # Referred-by name lookup
+    referred_by_ids = [u.referred_by_id for u in users if u.referred_by_id]
+    referred_by_map = {}
+    if referred_by_ids:
+        rb_result = await db.execute(select(User).where(User.id.in_(referred_by_ids)))
+        for rb in rb_result.scalars().all():
+            referred_by_map[rb.id] = rb.full_name or rb.email
+
     return [
         {
             "id": u.id,
@@ -66,10 +98,10 @@ async def list_users(skip: int = 0, limit: int = 200, admin: User = Depends(requ
             "payout_name": getattr(u, "payout_name", None),
             "created_at": u.created_at.isoformat(),
             "subscription_status": subs_map[u.id].status if u.id in subs_map else "inactive",
-            "referral_count": 0,
-            "total_earned": 0,
-            "pending_payout": 0,
-            "referred_by_name": None,
+            "referral_count": ref_counts_map.get(u.id, 0),
+            "total_earned": total_earned_map.get(u.id, 0.0),
+            "pending_payout": pending_map.get(u.id, 0.0),
+            "referred_by_name": referred_by_map.get(u.referred_by_id) if u.referred_by_id else None,
         }
         for u in users
     ]
