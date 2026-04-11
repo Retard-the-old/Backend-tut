@@ -55,13 +55,14 @@ async def process_weekly_payouts(db: AsyncSession) -> list[dict]:
                     f"MamoPay returned no transfer ID. Response keys: {list(transfer.keys())}"
                 )
             payout.mamopay_transfer_id = transfer_id
-            payout.status = "completed"
-            payout.paid_at = datetime.now(timezone.utc)
-            for comm in pending_comms:
-                comm.status = "paid"
-            await send_payout_confirmation(user.email, user.full_name, total_aed, user.payout_iban, len(pending_comms))
-            results.append({"earner_id": earner_id, "status": "completed", "amount": total_aed})
-            logger.info("Payout %.2f AED to %s completed", total_aed, user.email)
+            # Leave status as "processing" — it moves to "completed" only once the
+            # admin verifies the transfer settled in MamoPay via the verify endpoint.
+            results.append({"earner_id": earner_id, "status": "processing", "amount": total_aed})
+            logger.info("Payout %.2f AED to %s submitted (transfer_id=%s)", total_aed, user.email, transfer_id)
+            try:
+                await send_payout_confirmation(user.email, user.full_name, total_aed, user.payout_iban, len(pending_comms))
+            except Exception as email_err:
+                logger.warning("Payout confirmation email failed for %s: %s", user.email, email_err)
         except Exception as e:
             payout.status = "failed"
             payout.failure_reason = str(e)[:500]

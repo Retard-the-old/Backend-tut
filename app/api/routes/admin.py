@@ -169,6 +169,12 @@ async def verify_payout(payout_id: str, admin: User = Depends(require_admin), db
         if mamopay_status.lower() in ("completed", "processed", "paid") and payout.status != "completed":
             payout.status = "completed"
             payout.paid_at = payout.paid_at or datetime.now(timezone.utc)
+            # Mark associated commissions as paid
+            comms = (await db.execute(
+                select(Commission).where(Commission.payout_id == payout_id)
+            )).scalars().all()
+            for comm in comms:
+                comm.status = "paid"
             await db.flush()
         _audit(admin, "VERIFY_PAYOUT", f"payout={payout_id} mamopay_id={payout.mamopay_transfer_id} status={mamopay_status}")
         return {
