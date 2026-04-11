@@ -55,13 +55,23 @@ class MamoPayClient:
         reason: str = "Tutorii referral commission payout", external_id: str = "",
     ) -> dict:
         payload = {
-            "amount": amount, "amount_currency": "AED",
-            "iban": iban, "recipient_name": recipient_name,
-            "reason": reason, "external_id": external_id,
+            "disbursements": [
+                {
+                    "first_name_or_business_name": recipient_name,
+                    "account": iban,
+                    "transfer_method": "BANK_ACCOUNT",
+                    "reason": reason,
+                    "amount": str(amount),
+                }
+            ]
         }
-        return await self._request("POST", "/transfers", json=payload)
+        result = await self._request("POST", "/disbursements", json=payload)
+        # API returns a list — return the first item so callers get a single dict
+        if isinstance(result, list) and result:
+            return result[0]
+        return result
 
     async def get_transfer(self, transfer_id: str) -> dict:
-        return await self._request("GET", f"/transfers/{transfer_id}")
+        return await self._request("GET", f"/disbursements/{transfer_id}")
 
 mamopay_client = MamoPayClient()

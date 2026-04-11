@@ -43,7 +43,7 @@ async def process_weekly_payouts(db: AsyncSession) -> list[dict]:
                 amount=total_aed, iban=user.payout_iban,
                 recipient_name=user.payout_name, external_id=payout.id,
             )
-            payout.mamopay_transfer_id = transfer.get("id", "")
+            payout.mamopay_transfer_id = transfer.get("identifier") or transfer.get("id", "")
             payout.status = "completed"
             payout.paid_at = datetime.now(timezone.utc)
             for comm in pending_comms:
