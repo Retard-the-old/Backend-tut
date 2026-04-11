@@ -146,6 +146,7 @@ async def list_payouts(limit: int = 200, admin: User = Depends(require_admin), d
             "iban_name": u.payout_name or "",
             "amount": float(p.amount_aed),
             "status": p.status,
+            "mamopay_transfer_id": p.mamopay_transfer_id or "",
             "failure_reason": p.failure_reason,
             "date": p.paid_at.strftime("%b %d, %Y") if p.paid_at else p.created_at.strftime("%b %d, %Y"),
             "created_at": p.created_at.isoformat(),
@@ -184,6 +185,37 @@ async def verify_payout(payout_id: str, admin: User = Depends(require_admin), db
         }
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"MamoPay error: {str(e)[:200]}")
+
+
+@router.post("/payouts/{payout_id}/reset")
+async def reset_payout(payout_id: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Reset a payout that has no MamoPay transfer ID back to failed,
+    unlocking its commissions to pending so the next trigger re-processes them."""
+    result = await db.execute(select(Payout).where(Payout.id == payout_id))
+    payout = result.scalar_one_or_none()
+    if payout is None:
+        raise HTTPException(status_code=404, detail="Payout not found")
+    if payout.mamopay_transfer_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Payout has a MamoPay transfer ID — use Verify to check its status instead of resetting"
+        )
+
+    # Reset commissions linked to this payout back to pending
+    comms_result = await db.execute(
+        select(Commission).where(Commission.payout_id == payout_id)
+    )
+    comms = comms_result.scalars().all()
+    for comm in comms:
+        comm.status = "pending"
+        comm.payout_id = None
+
+    payout.status = "failed"
+    payout.failure_reason = "Manually reset by admin — no MamoPay transfer ID was recorded"
+    await db.flush()
+
+    _audit(admin, "RESET_PAYOUT", f"payout={payout_id} commissions_unlocked={len(comms)}")
+    return {"reset": True, "payout_id": payout_id, "commissions_unlocked": len(comms)}
 
 
 @router.post("/users/{user_id}/subscription/activate")
