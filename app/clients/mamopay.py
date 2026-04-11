@@ -68,8 +68,11 @@ class MamoPayClient:
         result = await self._request("POST", "/disbursements", json=payload)
         # API returns a list — return the first item so callers get a single dict
         if isinstance(result, list) and result:
-            return result[0]
-        return result
+            item = result[0]
+        else:
+            item = result
+        logger.debug("MamoPay disbursement raw response: %s", item)
+        return item
 
     async def get_transfer(self, transfer_id: str) -> dict:
         return await self._request("GET", f"/disbursements/{transfer_id}")
