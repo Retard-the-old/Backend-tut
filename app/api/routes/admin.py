@@ -192,6 +192,29 @@ async def verify_payout(payout_id: str, admin: User = Depends(require_admin), db
         raise HTTPException(status_code=502, detail=f"MamoPay error: {str(e)[:200]}")
 
 
+@router.post("/payouts/{payout_id}/reset")
+async def reset_payout(payout_id: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Payout).where(Payout.id == payout_id))
+    payout = result.scalar_one_or_none()
+    if payout is None:
+        raise HTTPException(status_code=404, detail="Payout not found")
+    if payout.status == "completed" and payout.mamopay_transfer_id:
+        raise HTTPException(status_code=400, detail="Cannot reset a verified completed payout")
+
+    # Return commissions to pending so they'll be picked up by the next trigger
+    comms = (await db.execute(
+        select(Commission).where(Commission.payout_id == payout_id)
+    )).scalars().all()
+    for comm in comms:
+        comm.status = "pending"
+        comm.payout_id = None
+
+    await db.delete(payout)
+    await db.flush()
+    _audit(admin, "RESET_PAYOUT", f"payout={payout_id} commissions_reset={len(comms)}")
+    return {"reset": True, "payout_id": payout_id, "commissions_reset": len(comms)}
+
+
 @router.post("/users/{user_id}/subscription/activate")
 async def admin_activate_subscription(user_id: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.id == user_id))
