@@ -12,6 +12,7 @@ from app.schemas.admin import DashboardStats, UserRoleUpdate
 from app.schemas.user import UserResponse
 from app.schemas.payout import PayoutResponse
 from app.services.payout_service import process_weekly_payouts
+from app.clients.mamopay import mamopay_client
 from datetime import datetime, timezone, timedelta
 import logging
 import secrets
@@ -151,6 +152,38 @@ async def list_payouts(limit: int = 200, admin: User = Depends(require_admin), d
         }
         for p, u in rows
     ]
+
+
+@router.get("/payouts/{payout_id}/verify")
+async def verify_payout(payout_id: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Payout).where(Payout.id == payout_id))
+    payout = result.scalar_one_or_none()
+    if payout is None:
+        raise HTTPException(status_code=404, detail="Payout not found")
+    if not payout.mamopay_transfer_id:
+        raise HTTPException(status_code=400, detail="No MamoPay transfer ID on record for this payout")
+    try:
+        data = await mamopay_client.get_transfer(payout.mamopay_transfer_id)
+        mamopay_status = data.get("status", "unknown")
+        # Sync status back if MamoPay confirms completed
+        if mamopay_status.lower() in ("completed", "processed", "paid") and payout.status != "completed":
+            payout.status = "completed"
+            payout.paid_at = payout.paid_at or datetime.now(timezone.utc)
+            await db.flush()
+        _audit(admin, "VERIFY_PAYOUT", f"payout={payout_id} mamopay_id={payout.mamopay_transfer_id} status={mamopay_status}")
+        return {
+            "payout_id": payout_id,
+            "mamopay_id": payout.mamopay_transfer_id,
+            "mamopay_status": mamopay_status,
+            "amount": data.get("amount_formatted"),
+            "recipient": data.get("recipient"),
+            "method": data.get("method"),
+            "reason": data.get("reason"),
+            "created_at": data.get("created_at"),
+            "local_status": payout.status,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"MamoPay error: {str(e)[:200]}")
 
 
 @router.post("/users/{user_id}/subscription/activate")
