@@ -43,7 +43,18 @@ async def process_weekly_payouts(db: AsyncSession) -> list[dict]:
                 amount=total_aed, iban=user.payout_iban,
                 recipient_name=user.payout_name, external_id=payout.id,
             )
-            payout.mamopay_transfer_id = transfer.get("identifier") or transfer.get("id", "")
+            transfer_id = (
+                transfer.get("identifier")
+                or str(transfer["id"]) if transfer.get("id") is not None else None
+                or transfer.get("reference")
+                or transfer.get("transaction_id")
+                or ""
+            )
+            if not transfer_id:
+                raise ValueError(
+                    f"MamoPay returned no transfer ID. Response keys: {list(transfer.keys())}"
+                )
+            payout.mamopay_transfer_id = str(transfer_id)
             payout.status = "completed"
             payout.paid_at = datetime.now(timezone.utc)
             for comm in pending_comms:
