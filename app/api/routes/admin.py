@@ -146,6 +146,7 @@ async def list_payouts(limit: int = 200, admin: User = Depends(require_admin), d
             "iban_name": u.payout_name or "",
             "amount": float(p.amount_aed),
             "status": p.status,
+            "mamopay_transfer_id": p.mamopay_transfer_id or "",
             "failure_reason": p.failure_reason,
             "date": p.paid_at.strftime("%b %d, %Y") if p.paid_at else p.created_at.strftime("%b %d, %Y"),
             "created_at": p.created_at.isoformat(),
@@ -213,6 +214,7 @@ async def verify_payout(payout_id: str, admin: User = Depends(require_admin), db
 
 @router.post("/payouts/{payout_id}/reset")
 async def reset_payout(payout_id: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Reset a failed/stuck payout, returning commissions to pending so the next trigger re-processes them."""
     result = await db.execute(select(Payout).where(Payout.id == payout_id))
     payout = result.scalar_one_or_none()
     if payout is None:

@@ -9,18 +9,18 @@ from app.middleware.request_logging import RequestLoggingMiddleware
 from app.services.mamopay_sync import start_sync_scheduler
 import logging
 import asyncio
+import concurrent.futures
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
 
-def run_migrations():
-    """Run alembic migrations at startup. Logs errors but does not crash the server."""
+def _run_migrations_sync():
+    """Synchronous migration runner — must be called from a thread (not the event loop)."""
     try:
         from alembic.config import Config
         from alembic import command
         import os
-        # Use absolute path so this works regardless of working directory
         base_dir = os.path.dirname(os.path.abspath(__file__))
         alembic_cfg = Config(os.path.join(base_dir, "alembic.ini"))
         alembic_cfg.set_main_option("script_location", os.path.join(base_dir, "alembic"))
@@ -30,10 +30,18 @@ def run_migrations():
         logger.error(f"Migration failed (server will still start): {e}", exc_info=True)
 
 
+async def run_migrations():
+    """Run alembic in a thread so asyncio.run() inside env.py doesn't conflict
+    with the already-running FastAPI event loop."""
+    loop = asyncio.get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        await loop.run_in_executor(pool, _run_migrations_sync)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Tutorii API starting up")
-    run_migrations()
+    await run_migrations()
     # Start background MamoPay sync — runs every hour to catch missed webhooks
     sync_task = asyncio.create_task(start_sync_scheduler())
     yield
