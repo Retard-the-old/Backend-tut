@@ -193,6 +193,8 @@ async def verify_payout(payout_id: str, admin: User = Depends(require_admin), db
                 payout.status = "failed"
                 payout.failure_reason = f"MamoPay status: {mamopay_status}"
                 await db.flush()
+        await db.commit()
+        await db.refresh(payout)
         _audit(admin, "VERIFY_PAYOUT", f"payout={payout_id} mamopay_id={payout.mamopay_transfer_id} status={mamopay_status}")
         return {
             "payout_id": payout_id,
