@@ -166,11 +166,36 @@ async def verify_payout(payout_id: str, admin: User = Depends(require_admin), db
     try:
         data = await mamopay_client.get_transfer(payout.mamopay_transfer_id)
         mamopay_status = data.get("status", "unknown")
-        # Sync status back if MamoPay confirms completed
-        if mamopay_status.lower() in ("completed", "processed", "paid") and payout.status != "completed":
-            payout.status = "completed"
-            payout.paid_at = payout.paid_at or datetime.now(timezone.utc)
-            await db.flush()
+        ms = mamopay_status.lower()
+        # Always sync local status to match MamoPay's real state
+        if ms in ("completed", "processed", "paid"):
+            if payout.status != "completed":
+                payout.status = "completed"
+                payout.paid_at = payout.paid_at or datetime.now(timezone.utc)
+                comms = (await db.execute(
+                    select(Commission).where(Commission.payout_id == payout_id)
+                )).scalars().all()
+                for comm in comms:
+                    comm.status = "paid"
+                await db.flush()
+        elif ms in ("processing", "pending", "in_progress"):
+            if payout.status != "processing":
+                payout.status = "processing"
+                # Revert commissions back to approved (in-flight, not yet confirmed)
+                comms = (await db.execute(
+                    select(Commission).where(Commission.payout_id == payout_id)
+                )).scalars().all()
+                for comm in comms:
+                    if comm.status == "paid":
+                        comm.status = "approved"
+                await db.flush()
+        elif ms in ("failed", "rejected", "cancelled", "expired"):
+            if payout.status != "failed":
+                payout.status = "failed"
+                payout.failure_reason = f"MamoPay status: {mamopay_status}"
+                await db.flush()
+        await db.commit()
+        await db.refresh(payout)
         _audit(admin, "VERIFY_PAYOUT", f"payout={payout_id} mamopay_id={payout.mamopay_transfer_id} status={mamopay_status}")
         return {
             "payout_id": payout_id,
@@ -189,33 +214,26 @@ async def verify_payout(payout_id: str, admin: User = Depends(require_admin), db
 
 @router.post("/payouts/{payout_id}/reset")
 async def reset_payout(payout_id: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    """Reset a payout that has no MamoPay transfer ID back to failed,
-    unlocking its commissions to pending so the next trigger re-processes them."""
+    """Reset a failed/stuck payout, returning commissions to pending so the next trigger re-processes them."""
     result = await db.execute(select(Payout).where(Payout.id == payout_id))
     payout = result.scalar_one_or_none()
     if payout is None:
         raise HTTPException(status_code=404, detail="Payout not found")
-    if payout.mamopay_transfer_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Payout has a MamoPay transfer ID — use Verify to check its status instead of resetting"
-        )
+    if payout.status == "completed" and payout.mamopay_transfer_id:
+        raise HTTPException(status_code=400, detail="Cannot reset a verified completed payout")
 
-    # Reset commissions linked to this payout back to pending
-    comms_result = await db.execute(
+    # Return commissions to pending so they'll be picked up by the next trigger
+    comms = (await db.execute(
         select(Commission).where(Commission.payout_id == payout_id)
-    )
-    comms = comms_result.scalars().all()
+    )).scalars().all()
     for comm in comms:
         comm.status = "pending"
         comm.payout_id = None
 
-    payout.status = "failed"
-    payout.failure_reason = "Manually reset by admin — no MamoPay transfer ID was recorded"
+    await db.delete(payout)
     await db.flush()
-
-    _audit(admin, "RESET_PAYOUT", f"payout={payout_id} commissions_unlocked={len(comms)}")
-    return {"reset": True, "payout_id": payout_id, "commissions_unlocked": len(comms)}
+    _audit(admin, "RESET_PAYOUT", f"payout={payout_id} commissions_reset={len(comms)}")
+    return {"reset": True, "payout_id": payout_id, "commissions_reset": len(comms)}
 
 
 @router.post("/users/{user_id}/subscription/activate")
