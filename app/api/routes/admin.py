@@ -165,17 +165,34 @@ async def verify_payout(payout_id: str, admin: User = Depends(require_admin), db
     try:
         data = await mamopay_client.get_transfer(payout.mamopay_transfer_id)
         mamopay_status = data.get("status", "unknown")
-        # Sync status back if MamoPay confirms completed
-        if mamopay_status.lower() in ("completed", "processed", "paid") and payout.status != "completed":
-            payout.status = "completed"
-            payout.paid_at = payout.paid_at or datetime.now(timezone.utc)
-            # Mark associated commissions as paid
-            comms = (await db.execute(
-                select(Commission).where(Commission.payout_id == payout_id)
-            )).scalars().all()
-            for comm in comms:
-                comm.status = "paid"
-            await db.flush()
+        ms = mamopay_status.lower()
+        # Always sync local status to match MamoPay's real state
+        if ms in ("completed", "processed", "paid"):
+            if payout.status != "completed":
+                payout.status = "completed"
+                payout.paid_at = payout.paid_at or datetime.now(timezone.utc)
+                comms = (await db.execute(
+                    select(Commission).where(Commission.payout_id == payout_id)
+                )).scalars().all()
+                for comm in comms:
+                    comm.status = "paid"
+                await db.flush()
+        elif ms in ("processing", "pending", "in_progress"):
+            if payout.status != "processing":
+                payout.status = "processing"
+                # Revert commissions back to approved (in-flight, not yet confirmed)
+                comms = (await db.execute(
+                    select(Commission).where(Commission.payout_id == payout_id)
+                )).scalars().all()
+                for comm in comms:
+                    if comm.status == "paid":
+                        comm.status = "approved"
+                await db.flush()
+        elif ms in ("failed", "rejected", "cancelled", "expired"):
+            if payout.status != "failed":
+                payout.status = "failed"
+                payout.failure_reason = f"MamoPay status: {mamopay_status}"
+                await db.flush()
         _audit(admin, "VERIFY_PAYOUT", f"payout={payout_id} mamopay_id={payout.mamopay_transfer_id} status={mamopay_status}")
         return {
             "payout_id": payout_id,
