@@ -54,13 +54,36 @@ async def list_users(skip: int = 0, limit: int = 200, admin: User = Depends(requ
     subs_result = await db.execute(select(Subscription).where(Subscription.user_id.in_(user_ids)))
     subs_map = {s.user_id: s for s in subs_result.scalars().all()}
 
-    # Referral counts
+    # L1 referral counts (direct referrals)
     ref_counts_result = await db.execute(
         select(User.referred_by_id, func.count(User.id).label("cnt"))
         .where(User.referred_by_id.in_(user_ids))
         .group_by(User.referred_by_id)
     )
     ref_counts_map = {row.referred_by_id: row.cnt for row in ref_counts_result.all()}
+
+    # L2 referral counts (referrals-of-referrals)
+    # Step 1: find all L1 users (users whose referred_by_id is one of our target users)
+    l1_result = await db.execute(
+        select(User.id, User.referred_by_id)
+        .where(User.referred_by_id.in_(user_ids))
+    )
+    l1_rows = l1_result.all()
+    l1_ids = [row.id for row in l1_rows]
+    # Map: L1 user id → their referrer (root user id)
+    l1_to_root = {row.id: row.referred_by_id for row in l1_rows}
+    # Step 2: count L2 users (users referred by any L1 user) and group by root user
+    l2_counts_map: dict = {}
+    if l1_ids:
+        l2_result = await db.execute(
+            select(User.referred_by_id, func.count(User.id).label("cnt"))
+            .where(User.referred_by_id.in_(l1_ids))
+            .group_by(User.referred_by_id)
+        )
+        for row in l2_result.all():
+            root_id = l1_to_root.get(row.referred_by_id)
+            if root_id:
+                l2_counts_map[root_id] = l2_counts_map.get(root_id, 0) + row.cnt
 
     # Total earned (all paid commissions)
     total_earned_result = await db.execute(
@@ -100,6 +123,7 @@ async def list_users(skip: int = 0, limit: int = 200, admin: User = Depends(requ
             "created_at": u.created_at.isoformat(),
             "subscription_status": subs_map[u.id].status if u.id in subs_map else "inactive",
             "referral_count": ref_counts_map.get(u.id, 0),
+            "l2_referral_count": l2_counts_map.get(u.id, 0),
             "total_earned": total_earned_map.get(u.id, 0.0),
             "pending_payout": pending_map.get(u.id, 0.0),
             "referred_by_name": referred_by_map.get(u.referred_by_id) if u.referred_by_id else None,
