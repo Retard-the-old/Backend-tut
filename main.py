@@ -38,10 +38,38 @@ async def run_migrations():
         await loop.run_in_executor(pool, _run_migrations_sync)
 
 
+async def bootstrap_admin():
+    """If ADMIN_EMAIL env var is set, ensure that user has role='admin'."""
+    email = (settings.ADMIN_EMAIL or "").strip().lower()
+    if not email:
+        return
+    try:
+        from app.db.database import AsyncSessionLocal
+        from sqlalchemy import select, update
+        from app.models.user import User
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(User).where(User.email == email))
+            user = result.scalar_one_or_none()
+            if user is None:
+                logger.warning("bootstrap_admin: no user found with email=%s", email)
+                return
+            if user.role != "admin":
+                await db.execute(
+                    update(User).where(User.email == email).values(role="admin")
+                )
+                await db.commit()
+                logger.info("bootstrap_admin: promoted %s to admin", email)
+            else:
+                logger.info("bootstrap_admin: %s is already admin", email)
+    except Exception as e:
+        logger.error("bootstrap_admin failed: %s", e, exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Tutorii API starting up")
     await run_migrations()
+    await bootstrap_admin()
     # Start background MamoPay sync — runs every hour to catch missed webhooks
     sync_task = asyncio.create_task(start_sync_scheduler())
     yield

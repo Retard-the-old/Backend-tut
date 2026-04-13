@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
+    # ── Bootstrap ──
+    ADMIN_EMAIL: str = ""   # Set this env var to auto-promote the user to admin on startup
+
     # ── Frontend ──
     FRONTEND_URL: str = "https://www.tutorii.com"
 
