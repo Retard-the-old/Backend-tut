@@ -147,6 +147,22 @@ async def update_role(user_id: str, data: UserRoleUpdate, admin: User = Depends(
     return UserResponse.model_validate(user)
 
 
+@router.patch("/users/{user_id}/payout-info")
+async def update_payout_info(user_id: str, data: dict, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if "payout_iban" in data and data["payout_iban"]:
+        user.payout_iban = data["payout_iban"].strip().replace(" ", "")
+    if "payout_name" in data and data["payout_name"]:
+        user.payout_name = data["payout_name"].strip()
+    await db.commit()
+    await db.refresh(user)
+    _audit(admin, "UPDATE_IBAN", f"target={user.email} ({user_id}) | iban={user.payout_iban}")
+    return {"ok": True, "payout_iban": user.payout_iban, "payout_name": user.payout_name}
+
+
 @router.post("/payouts/trigger")
 async def trigger_payouts(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     results = await process_weekly_payouts(db)
