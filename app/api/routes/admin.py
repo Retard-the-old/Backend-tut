@@ -163,6 +163,53 @@ async def update_payout_info(user_id: str, data: dict, admin: User = Depends(req
     return {"ok": True, "payout_iban": user.payout_iban, "payout_name": user.payout_name}
 
 
+@router.post("/payouts/{payout_id}/process")
+async def process_single_payout(payout_id: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Process a single user-requested payout via MamoPay."""
+    result = await db.execute(select(Payout).where(Payout.id == payout_id))
+    payout = result.scalar_one_or_none()
+    if payout is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payout not found")
+    if payout.status not in ("requested", "failed"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Cannot process a payout with status '{payout.status}'")
+
+    user_result = await db.execute(select(User).where(User.id == payout.earner_id))
+    user = user_result.scalar_one_or_none()
+    if user is None or not user.payout_iban or not user.payout_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User missing IBAN or account name")
+
+    try:
+        transfer = await mamopay_client.create_transfer(
+            amount=payout.amount_aed, iban=user.payout_iban,
+            recipient_name=user.payout_name, external_id=payout.id,
+        )
+        raw_id = transfer.get("id")
+        transfer_id = (
+            transfer.get("identifier")
+            or (str(raw_id) if raw_id is not None else "")
+            or transfer.get("reference", "")
+        )
+        if not transfer_id:
+            raise ValueError(f"MamoPay returned no transfer ID. Keys: {list(transfer.keys())}")
+        payout.mamopay_transfer_id = transfer_id
+        payout.status = "processing"
+        await db.commit()
+        await db.refresh(payout)
+        _audit(admin, "PROCESS_PAYOUT", f"payout={payout_id} | user={user.email} | amount={payout.amount_aed} | transfer={transfer_id}")
+        return {"ok": True, "status": "processing", "transfer_id": transfer_id, "amount_aed": payout.amount_aed}
+    except Exception as e:
+        payout.status = "failed"
+        payout.failure_reason = str(e)[:500]
+        # Revert commissions back to pending
+        comms_result = await db.execute(select(Commission).where(Commission.payout_id == payout.id))
+        for comm in comms_result.scalars().all():
+            comm.status = "pending"
+            comm.payout_id = None
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"MamoPay error: {str(e)[:200]}")
+
+
 @router.post("/payouts/trigger")
 async def trigger_payouts(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     results = await process_weekly_payouts(db)

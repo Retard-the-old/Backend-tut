@@ -1,14 +1,15 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status as http_status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from app.db.database import get_db
 from app.core.dependencies import get_current_user
 from app.core.validators import validate_iban, validate_full_name
-from app.models.user import User
+from app.models.user import User, new_id
 from app.models.subscription import Subscription
-from app.models.commission import Commission
+from app.models.commission import Commission, Payout
 from app.schemas.user import UserResponse, UserUpdate, ReferralStats
 from app.services.referral_service import get_referral_stats
+from app.core.config import settings
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -104,3 +105,63 @@ async def get_referral_list(user: User = Depends(get_current_user), db: AsyncSes
         ]
 
     return {"level1": l1_list, "level2": l2_list}
+
+
+@router.post("/me/payout-request")
+async def request_payout(data: dict, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    amount = float(data.get("amount", 0))
+
+    # Validate amount
+    if amount < settings.MINIMUM_PAYOUT_AED:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST,
+                            detail=f"Minimum payout is AED {settings.MINIMUM_PAYOUT_AED:.0f}")
+    if not user.payout_iban or not user.payout_name:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST,
+                            detail="Please set your IBAN and account holder name in Settings before requesting a payout")
+
+    # Get available pending commissions
+    pending_result = await db.execute(
+        select(Commission)
+        .where(Commission.earner_id == user.id, Commission.status == "pending")
+        .order_by(Commission.created_at.asc())
+    )
+    pending_comms = pending_result.scalars().all()
+    total_pending = sum(c.amount_aed for c in pending_comms)
+
+    if total_pending < settings.MINIMUM_PAYOUT_AED:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST,
+                            detail=f"Not enough pending earnings. Available: AED {total_pending:.2f}")
+    if amount > total_pending:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST,
+                            detail=f"Requested amount exceeds available earnings (AED {total_pending:.2f})")
+
+    # Check for an existing open request
+    existing = await db.execute(
+        select(Payout).where(Payout.earner_id == user.id, Payout.status == "requested")
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST,
+                            detail="You already have a pending payout request. Please wait for it to be processed.")
+
+    # Create the payout record
+    payout = Payout(earner_id=user.id, amount_aed=round(amount, 2), status="requested")
+    db.add(payout)
+    await db.flush()  # get payout.id
+
+    # Greedily allocate pending commissions up to the requested amount
+    allocated = 0.0
+    for comm in pending_comms:
+        if allocated >= amount:
+            break
+        comm.status = "approved"
+        comm.payout_id = payout.id
+        allocated += comm.amount_aed
+
+    await db.commit()
+    await db.refresh(payout)
+    return {
+        "id": payout.id,
+        "amount_aed": payout.amount_aed,
+        "status": payout.status,
+        "created_at": payout.created_at.isoformat(),
+    }
