@@ -38,7 +38,7 @@ async def send_message(user_id: str, req: SendMessageRequest, db: AsyncSession) 
         if lesson and lesson.content_md:
             lesson_context = f"Lesson: {lesson.title}\n\n{lesson.content_md[:3000]}"
 
-    response = await claude_client.chat(messages=history, lesson_context=lesson_context)
+    response = await claude_client.chat(messages=history, system=req.system or None, lesson_context=lesson_context)
 
     assistant_msg = ChatMessage(
         session_id=session.id, role="assistant", content=response["content"],

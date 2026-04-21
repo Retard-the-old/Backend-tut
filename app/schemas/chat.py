@@ -25,6 +25,7 @@ class SendMessageRequest(BaseModel):
     session_id: str | None = None
     course_id: str | None = None
     lesson_id: str | None = None
+    system: str | None = None  # Account-aware system prompt from frontend
 
 class SendMessageResponse(BaseModel):
     session_id: str
