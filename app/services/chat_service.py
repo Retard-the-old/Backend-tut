@@ -19,6 +19,10 @@ async def send_message(user_id: str, req: SendMessageRequest, db: AsyncSession) 
         session = ChatSession(
             user_id=user_id, course_id=req.course_id, lesson_id=req.lesson_id,
             title=req.content[:60] + ("..." if len(req.content) > 60 else ""),
+            # Store the system prompt once on session creation — follow-up messages reuse it
+            # without the frontend needing to resend it, saving HTTP payload and making
+            # prompt caching more effective (same text = cache hit).
+            system_prompt=req.system or None,
         )
         db.add(session)
         await db.flush()
@@ -38,7 +42,9 @@ async def send_message(user_id: str, req: SendMessageRequest, db: AsyncSession) 
         if lesson and lesson.content_md:
             lesson_context = f"Lesson: {lesson.title}\n\n{lesson.content_md[:3000]}"
 
-    response = await claude_client.chat(messages=history, system=req.system or None, lesson_context=lesson_context)
+    # Use stored system prompt for follow-up messages (req.system will be None for those)
+    effective_system = req.system or session.system_prompt or None
+    response = await claude_client.chat(messages=history, system=effective_system, lesson_context=lesson_context)
 
     assistant_msg = ChatMessage(
         session_id=session.id, role="assistant", content=response["content"],
