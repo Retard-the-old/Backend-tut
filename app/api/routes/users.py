@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status as http_status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from pydantic import BaseModel
 from app.db.database import get_db
 from app.core.dependencies import get_current_user
 from app.core.validators import validate_iban, validate_full_name
+from app.core.security import hash_password
 from app.models.user import User, new_id
 from app.models.subscription import Subscription
 from app.models.commission import Commission, Payout
@@ -33,6 +35,23 @@ async def update_me(data: UserUpdate, user: User = Depends(get_current_user), db
         user.payout_name = data.payout_name
     await db.flush()
     return UserResponse.model_validate(user)
+
+class ChangePasswordRequest(BaseModel):
+    new_password: str
+    confirm_password: str
+
+@router.post("/me/change-password", status_code=http_status.HTTP_204_NO_CONTENT)
+async def change_password(
+    data: ChangePasswordRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if data.new_password != data.confirm_password:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="Passwords do not match")
+    if len(data.new_password) < 8:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters")
+    user.hashed_password = hash_password(data.new_password)
+    await db.commit()
 
 @router.get("/me/referrals", response_model=ReferralStats)
 async def get_my_referrals(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
