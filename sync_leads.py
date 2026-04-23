@@ -74,7 +74,15 @@ def sync():
                     headers=headers,
                     timeout=10
                 )
-                col.update_one({"_id": lead["_id"]}, {"$set": {"accountProvisioned": True}})
+                # Write credentials back to MongoDB so the bot can relay them via WhatsApp
+                col.update_one({"_id": lead["_id"]}, {"$set": {
+                    "accountProvisioned": True,
+                    "accountCreated": True,
+                    "loginEmail": email,
+                    "loginPassword": password,
+                    "loginUrl": "https://www.tutorii.com",
+                    "notificationSent": False,  # bot sets this to True after texting the user
+                }})
                 print(f"✓ Created + activated: {email} (password: {password})")
                 created += 1
 
