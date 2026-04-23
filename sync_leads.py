@@ -67,8 +67,15 @@ def sync():
             )
 
             if res.status_code in (200, 201):
+                user_id = res.json().get("id")
+                # Activate subscription immediately — bypasses payment requirement
+                httpx.post(
+                    f"{BACKEND}/admin/users/{user_id}/subscription/activate",
+                    headers=headers,
+                    timeout=10
+                )
                 col.update_one({"_id": lead["_id"]}, {"$set": {"accountProvisioned": True}})
-                print(f"✓ Created: {email} (password: {password})")
+                print(f"✓ Created + activated: {email} (password: {password})")
                 created += 1
 
             elif res.status_code == 400:
