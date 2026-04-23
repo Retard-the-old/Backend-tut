@@ -23,7 +23,13 @@ def get_token() -> str:
 def get_password(email: str) -> str:
     username = email.split("@")[0]
     base = username.capitalize()
-    return base if len(base) >= 8 else base + "12345"
+    # Pad with digits only until we reach exactly 8 characters
+    padding = "123456789"
+    i = 0
+    while len(base) < 8:
+        base += padding[i % len(padding)]
+        i += 1
+    return base
 
 
 def sync():
