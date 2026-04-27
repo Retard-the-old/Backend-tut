@@ -16,6 +16,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
+def _gen_order_number() -> str:
+    """Generate a human-readable order number like TTR-82947."""
+    import random
+    return "TTR-" + str(random.randint(10000, 99999))
+
+
 def _verify_signature(payload_bytes: bytes, signature_header: str | None) -> bool:
     """
     Verify MamoPay webhook HMAC-SHA256 signature.
@@ -137,6 +143,7 @@ async def mamopay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
                 amount_aed=amount or settings.SUBSCRIPTION_PRICE_AED,
                 status="succeeded",
                 mamopay_charge_id=charge_id,
+                order_number=_gen_order_number(),
             )
             db.add(payment)
             await db.commit()
@@ -167,6 +174,7 @@ async def mamopay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             amount_aed=amount or settings.SUBSCRIPTION_PRICE_AED,
             status="succeeded",
             mamopay_charge_id=charge_id,
+            order_number=_gen_order_number(),
         )
         db.add(payment)
 

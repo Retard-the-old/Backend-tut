@@ -159,17 +159,20 @@ async def verify_and_activate(user: User, db: AsyncSession) -> dict:
             select(Payment).where(Payment.mamopay_charge_id == charge_id)
         )
         if not existing.scalars().first():
+            import random
             payment = Payment(
                 subscription_id=sub.id,
                 user_id=user.id,
                 amount_aed=float(matched_charge.get("amount", 95)),
                 status="succeeded",
                 mamopay_charge_id=charge_id,
+                order_number="TTR-" + str(random.randint(10000, 99999)),
             )
             db.add(payment)
 
     await db.commit()
-    return {"activated": True, "message": "Payment verified and subscription activated!"}
+    order_num = payment.order_number if charge_id else None
+    return {"activated": True, "message": "Payment verified and subscription activated!", "order_number": order_num}
 
 
 async def verify_payment_and_register(data: dict, db: AsyncSession) -> dict:
@@ -297,19 +300,24 @@ async def verify_payment_and_register(data: dict, db: AsyncSession) -> dict:
 
     # Record payment
     charge_id = matched_charge.get("id") or matched_charge.get("charge_id")
+    import random as _random
+    order_num = None
     if charge_id:
+        order_num = "TTR-" + str(_random.randint(10000, 99999))
         payment = Payment(
             subscription_id=sub.id,
             user_id=existing_user.id,
             amount_aed=float(matched_charge.get("amount", 95)),
             status="succeeded",
             mamopay_charge_id=charge_id,
+            order_number=order_num,
         )
         db.add(payment)
 
     await db.commit()
     return {
         "activated": True,
+        "order_number": order_num,
         "access_token": create_access_token(str(existing_user.id)),
         "refresh_token": create_refresh_token(str(existing_user.id)),
         "message": "Payment verified and account created!"

@@ -34,6 +34,7 @@ class Payment(Base):
     amount_aed: Mapped[float] = mapped_column(Float, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     mamopay_charge_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    order_number: Mapped[str | None] = mapped_column(String(20), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     subscription: Mapped["Subscription"] = relationship("Subscription", back_populates="payments")
