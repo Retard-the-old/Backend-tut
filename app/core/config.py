@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     MAMOPAY_API_KEY: str = ""
     MAMOPAY_BASE_URL: str = "https://business.mamopay.com/manage_api/v1"
     MAMOPAY_WEBHOOK_SECRET: str = ""
-    MAMOPAY_SUBSCRIPTION_LINK: str = "https://business.mamopay.com/pay/galcofzellc-4b20ab"
+    MAMOPAY_SUBSCRIPTION_LINK: str = "https://business.mamopay.com/pay/galcofzellc-6064fd066371"
 
     # ── Anthropic ──
     ANTHROPIC_API_KEY: str = ""
